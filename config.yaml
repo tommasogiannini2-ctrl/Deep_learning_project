@@ -77,8 +77,10 @@ training:
   weight_decay: 1.0e-4
   optimizer: adamw            # adam | adamw | sgd
   scheduler: cosine           # none | cosine | plateau
-  gradient_clip: 1.0          # null per disattivare
-  early_stopping_patience: 10
+  plateau_factor: 0.5         # solo con scheduler: plateau (moltiplica il learning rate)
+  plateau_patience: 3         # solo con scheduler: plateau (epoche senza miglioramento prima di ridurlo)
+  gradient_clip: 1.0          # norma massima del gradiente; null per disattivare
+  early_stopping_patience: 10 # epoche senza miglioramento in validazione; null per disattivare
   loss: pinball               # pinball (Pinball Loss sui quantili di task.quantiles)
   device: auto                # auto | cpu | cuda
 

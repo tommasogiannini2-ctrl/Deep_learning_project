@@ -170,7 +170,7 @@ Tutti gli iperparametri e i percorsi del progetto sono centralizzati nel file [`
 - **`preprocessing`**: normalizzazione di feature e target, riempimento dei NaN, convenzione delle maschere, padding dinamico, `use_future_meteo`, `drop_features` (per ablation), `add_delta_t`. Il significato di ogni parametro è in [`docs/batch_contract.md`](docs/batch_contract.md), sezione 5.
 - **`task`**: vincoli fissati dalla traccia (`targets`, `n_past`, `n_future`, `quantiles`) — **da non modificare**.
 - **`model`**: modello da usare (`name`: `persistence` oppure `residual_mlp`) e parametri di ciascun modello nel blocco `params.<nome>`. Viene letto solo il blocco del modello scelto, quindi per cambiare modello basta cambiare `name`.
-- **`training`**: epoche, `batch_size`, `learning_rate`, `weight_decay`, `optimizer`, `scheduler`, `gradient_clip`, `early_stopping_patience`, `loss` (funzione di perdita, default `pinball`) e `device`.
+- **`training`**: epoche, `batch_size`, `learning_rate`, `weight_decay`, `optimizer` (`adam`, `adamw`, `sgd`), `scheduler` (`cosine`, `plateau`, `none`, con `plateau_factor` e `plateau_patience` per `plateau`), `gradient_clip`, `early_stopping_patience` (con `null` si disattivano clipping ed early stopping), `loss` (funzione di perdita, default `pinball`) e `device` (`auto`, `cpu`, `cuda`).
 - **`output`**: cartella di salvataggio (`dir`) e nome dell'esperimento (`experiment_name`).
 
 ### Lettura dal codice
@@ -217,7 +217,7 @@ python -m unittest discover tests
 .
 ├── config.yaml                 # configurazione unica (iperparametri e percorsi)         [fatto]
 ├── requirements.txt            # dipendenze con versioni fissate                         [fatto]
-├── main.py                     # punto di ingresso                                       [da fare]
+├── main.py                     # punto di ingresso (comando train)                       [in corso]
 ├── docs/
 │   └── batch_contract.md       # specifica del batch e dell'interfaccia modello–pipeline [fatto]
 ├── src/
@@ -227,7 +227,7 @@ python -m unittest discover tests
 │   ├── preprocessing.py        # Dataset, normalizzazione, masking, DataLoader           [da fare]
 │   ├── metrics.py              # RMSE, MAE, WMAPE, MASE, CRPS, pinball, coverage         [da fare]
 │   ├── losses.py               # Pinball Loss e build_loss()                             [fatto]
-│   ├── train.py                # ciclo di addestramento                                  [da fare]
+│   ├── train.py                # ciclo di addestramento, checkpoint, load_model_from_checkpoint  [fatto]
 │   ├── eval.py                 # valutazione su id / ood-s / ood-t                       [da fare]
 │   └── models/                 # architetture (baseline, RNN, Transformer, ...)          [in corso]
 │       ├── __init__.py         # registro dei modelli e build_model(cfg)                 [fatto]
@@ -236,7 +236,8 @@ python -m unittest discover tests
 └── tests/
     ├── test_contract.py        # test sul contratto del batch                            [fatto]
     ├── test_losses_and_common.py  # test su loss e componenti comuni dei modelli         [fatto]
-    └── test_models.py          # test su baseline e build_model                          [fatto]
+    ├── test_models.py          # test su baseline e build_model                          [fatto]
+    └── test_train.py           # test su training loop, checkpoint e comando train      [fatto]
 ```
 
 L'EDA si lancia con `python -m src.eda` e salva grafici e `eda_summary.json` in `runs/eda/`.
@@ -318,9 +319,9 @@ Un modello utile deve scendere chiaramente sotto questi valori, soprattutto su `
 
 ## 7. Addestramento e valutazione
 
-*Da completare quando `train.py`, `eval.py` e `metrics.py` saranno pronti.* Struttura prevista:
+*Da completare quando `eval.py` e `metrics.py` saranno pronti.* Struttura prevista:
 
-- **Addestramento**: `python main.py train` (o `python -m src.train`), con parametri letti da `config.yaml`.
+- **Addestramento**: `python main.py train`, con parametri letti da `config.yaml` (dettagli nella sezione "Training loop" qui sotto).
 - **Valutazione**: calcolo di RMSE, MAE, WMAPE, MASE, CRPS, pinball loss e copertura all'80% su `id`, `ood_s` e `ood_t`, sulla scala originale.
 - **Validazione**: sottoinsieme del train separato **per area** (`val_split_by: area`), bilanciato per numero di campioni e classi di Köppen (`val_balance_climate: true`).
 - **Riferimenti**: baseline di persistenza e modello dei docenti.
@@ -340,6 +341,44 @@ Le baseline sono in [`src/models/baselines.py`](src/models/baselines.py) e si sc
 
 - **Persistenza** (`persistence`): prevede per tutti e 3 gli step l'ultima osservazione clear-sky (`last_obs`), con i tre quantili coincidenti. Non ha parametri ed è il riferimento minimo da battere.
 - **MLP residuo** (`residual_mlp`): per ciascuno dei 3 step costruisce un vettore di dimensione fissa con la media della history e il giorno $t_0$, la media del futuro **solo fino al giorno del target** (riassunto causale: lo step 1 non vede il meteo successivo) e il giorno del target, più la codifica dell'orizzonte `target_delta_t`. Il vettore passa in un MLP (`Linear → LayerNorm → GELU → Dropout`, 2 strati da 128 neuroni) e nella testa dei quantili con previsione residua. Le medie perdono l'ordine dei giorni: è il limite che i modelli sequenziali dovranno superare.
+
+### Training loop
+
+Il ciclo di addestramento è in [`src/train.py`](src/train.py) e si lancia da [`main.py`](main.py) (test in `tests/test_train.py`).
+
+```bash
+python main.py train                          # addestra il modello di config.yaml sui dati veri
+python main.py train --dummy                  # prova la pipeline con batch sintetici (senza DATA/)
+python main.py train --epochs 5 --name prova  # override di epoche e nome dell'esperimento
+python main.py train --output-dir runs/mio    # cartella esatta degli output
+```
+
+Per ogni epoca addestra sul train, misura la Pinball Loss sulla validazione (il sottoinsieme del train separato per area) e aggiorna il learning rate. Tutto è configurabile dalla sezione `training` di `config.yaml`:
+
+- **Optimizer**: `adamw` (default), `adam` o `sgd` con momentum.
+- **Scheduler**: `cosine` (default, il learning rate scende fino a 0 lungo le epoche), `plateau` (lo riduce quando la validazione non migliora) o `none`.
+- **Gradient clipping** (`gradient_clip: 1.0`): limita la norma del gradiente per evitare picchi su batch estremi.
+- **Early stopping** (`early_stopping_patience: 10`): ferma l'addestramento se la validazione non migliora per 10 epoche e restituisce i pesi dell'epoca migliore, non dell'ultima.
+- **Riproducibilità**: `seed` fissa i generatori casuali; due addestramenti con lo stesso seed danno le stesse loss.
+
+Gli output sono in `runs/<output.experiment_name>/`:
+
+| File | Contenuto |
+|---|---|
+| `best.pt` | pesi dell'epoca migliore, configurazione usata, `num_features`, `best_val_loss`, `best_epoch`, `seed` |
+| `config_used.yaml` | copia leggibile della configurazione dell'esperimento |
+| `history.json` | loss di train e di validazione, learning rate e durata di ogni epoca |
+
+**Caricare un modello addestrato** (ad esempio nella valutazione): il checkpoint contiene la propria configurazione, quindi il modello si ricrea correttamente anche se nel frattempo `config.yaml` è cambiato.
+
+```python
+from src.train import load_model_from_checkpoint
+
+model, ckpt = load_model_from_checkpoint("runs/default/best.pt", device="cpu")
+preds = model(batch)   # (B, 3, 3, 3) = (batch, step, indice, quantile), quantili ordinati
+```
+
+La persistenza non ha parametri: `train()` misura la loss una sola volta e salva comunque `best.pt`, così la valutazione tratta tutti i modelli allo stesso modo.
 
 ---
 
