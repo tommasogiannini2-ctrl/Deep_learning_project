@@ -90,13 +90,13 @@ Si addestra **una sola volta** e poi si misura quanto il modello generalizza nel
 
 | Split | Ruolo | Dove | Quando | Campioni (traccia) | Campioni (nostra EDA su `DATA/`) |
 |---|---|---|---|---|---|
-| `train` | Addestramento | Regioni di training | 2017–2019 | 55.338 | **104.699** (84 aree, date fino al 30/05/2020) ⚠️ |
+| `train` | Addestramento | Regioni di training | 2017–2020 (fino al 30/05/2020) | 55.338 *(refuso)* | **104.699** (84 aree) |
 | `id` | Test in-distribution | Vicino alle località di training | 2020 | 3.336 | 3.336 |
 | `ood-s` | Test con spostamento spaziale | **Regioni mai viste** | 2017–2019 | 25.619 | 25.576 |
 | `ood-t` | Test con spostamento temporale | Stesse località di `id` | **2021–2022** | 6.512 | 6.511 |
 | *hidden* | Valutazione finale | Tenuto dai docenti, mai rilasciato | – | – | – |
 
-> ⚠️ **Discrepanza sul train**: la cartella `DATA/train_multi_output_clear_sky` contiene quasi il doppio dei campioni indicati nella traccia e include 1.734 campioni nei primi mesi del 2020 (fino al 30 maggio), che potrebbero sovrapporsi temporalmente allo split `id`. Vedi [Punti aperti](#9-punti-aperti).
+> ℹ️ **Nota sugli split**: i numeri riportati nella traccia per il `train` (55.338 campioni, 2017–2019) contengono un **refuso confermato**. Vanno utilizzati **tutti i dati presenti nei vari split** in `DATA/` così come forniti (104.699 campioni per `train`, 3.336 per `id`, 25.576 per `ood-s`, 6.511 per `ood-t`), senza applicare filtri temporali o sottocampionamenti.
 
 Regole:
 - Si addestra **solo sullo split `train`**.
@@ -341,7 +341,7 @@ Questi blocchi sono condivisi da tutte le architetture e sono già implementati 
 
 ## 9. Punti aperti
 
-- [ ] **Dimensione e periodo del train**: la cartella `DATA/` ha 104.699 campioni fino al 30/05/2020, contro i 55.338 (2017–2019) della traccia. Chiarire col professore e, se serve, filtrare il train a fine 2019 per evitare sovrapposizioni temporali con `id`.
+- [x] **Dimensione e periodo del train**: chiarito che il valore nella traccia (55.338 campioni, 2017–2019) è un refuso; vanno usati tutti i dati presenti nei vari split di `DATA/` (104.699 campioni nel `train`) senza filtri.
 - [ ] **Trattamento di `wind == 0`**: rimuovere la feature, oppure trattare gli zeri come mancanti con maschera.
 - [ ] **Qualità dello split di validazione per area**: verificare le proporzioni dato lo sbilanciamento delle aree.
 - [ ] **Scelta dell'architettura** e compilazione della sezione `model` di `config.yaml`.
