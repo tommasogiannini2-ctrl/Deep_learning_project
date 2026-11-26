@@ -56,8 +56,16 @@ task:
 # Modello (da completare quando scegliamo l'architettura)
 # -----------------------------------------------------------------------------
 model:
-  name: null
-  params: {}
+  name: residual_mlp          # modello da usare: persistence | residual_mlp
+  # Parametri di ciascun modello: viene letto solo il blocco del modello scelto in `name`.
+  params:
+    persistence: {}           # nessun parametro (ripete l'ultima osservazione)
+    residual_mlp:
+      hidden_dim: 128         # neuroni per strato nascosto
+      num_layers: 2           # strati nascosti (Linear -> LayerNorm -> GELU -> Dropout)
+      dropout: 0.1
+      time_dim: 16            # dimensione della codifica sinusoidale dell'orizzonte (pari)
+      residual: true          # true: prevede la variazione rispetto a last_obs
 
 # -----------------------------------------------------------------------------
 # Addestramento

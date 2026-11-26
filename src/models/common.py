@@ -18,6 +18,10 @@ tre problemi. Li risolviamo qui una volta sola:
    step futuri nei 3 quantili dei 3 indici, garantendo per costruzione
    q0.1 <= q0.5 <= q0.9 (nessun "quantile crossing") e, opzionalmente,
    prevedendo la variazione rispetto all'ultima osservazione (`last_obs`).
+
+In più `gather_time_steps` estrae da una sequenza giornaliera i passi indicati
+da `future_target_positions` (i giorni dei 3 target): serve a qualsiasi modello
+che produce una rappresentazione per ogni giorno di `future`.
 """
 
 from __future__ import annotations
@@ -274,3 +278,31 @@ class MonotonicQuantileHead(nn.Module):
 
         # Ordine dell'ultimo asse come nel contratto: [q0.1, q0.5, q0.9].
         return torch.stack([q10, q50, q90], dim=-1)
+
+
+# =============================================================================
+# 4. Lettura dei passi target da una sequenza
+# =============================================================================
+
+
+def gather_time_steps(x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+    """Estrae da una sequenza i timestep indicati, separatamente per ogni campione.
+
+    Esempio: `x` contiene un vettore per ogni giorno di `future` e `positions`
+    contiene i giorni dei 3 target (`batch["future_target_positions"]`, 0-based):
+    il risultato contiene solo i 3 vettori di quei giorni.
+
+    Args:
+        x: (B, T, D) sequenza di vettori.
+        positions: (B, K) indici interi in [0, T-1].
+
+    Returns:
+        (B, K, D) con out[b, k] = x[b, positions[b, k]].
+    """
+    if x.ndim != 3 or positions.ndim != 2 or positions.shape[0] != x.shape[0]:
+        raise ValueError(
+            f"Attesi x (B, T, D) e positions (B, K), trovati {tuple(x.shape)} e {tuple(positions.shape)}."
+        )
+    # positions (B, K) -> (B, K, D): stesso indice temporale per tutti i D canali.
+    index = positions.unsqueeze(-1).expand(-1, -1, x.shape[-1])
+    return x.gather(dim=1, index=index)

@@ -169,7 +169,7 @@ Tutti gli iperparametri e i percorsi del progetto sono centralizzati nel file [`
 - **`data`**: percorso della cartella `DATA/`, nomi degli split (`train`, `id`, `ood_s`, `ood_t`), file dello scaler del train (`scaler_file`), frazione e criterio di validazione (`val_fraction`, `val_split_by`, `val_balance_climate`), `num_workers`.
 - **`preprocessing`**: normalizzazione di feature e target, riempimento dei NaN, convenzione delle maschere, padding dinamico, `use_future_meteo`, `drop_features` (per ablation), `add_delta_t`. Il significato di ogni parametro è in [`docs/batch_contract.md`](docs/batch_contract.md), sezione 5.
 - **`task`**: vincoli fissati dalla traccia (`targets`, `n_past`, `n_future`, `quantiles`) — **da non modificare**.
-- **`model`**: nome del modello (`name`) e dizionario dei suoi parametri (`params`), da compilare in base all'architettura scelta.
+- **`model`**: modello da usare (`name`: `persistence` oppure `residual_mlp`) e parametri di ciascun modello nel blocco `params.<nome>`. Viene letto solo il blocco del modello scelto, quindi per cambiare modello basta cambiare `name`.
 - **`training`**: epoche, `batch_size`, `learning_rate`, `weight_decay`, `optimizer`, `scheduler`, `gradient_clip`, `early_stopping_patience`, `loss` (funzione di perdita, default `pinball`) e `device`.
 - **`output`**: cartella di salvataggio (`dir`) e nome dell'esperimento (`experiment_name`).
 
@@ -230,10 +230,13 @@ python -m unittest discover tests
 │   ├── train.py                # ciclo di addestramento                                  [da fare]
 │   ├── eval.py                 # valutazione su id / ood-s / ood-t                       [da fare]
 │   └── models/                 # architetture (baseline, RNN, Transformer, ...)          [in corso]
+│       ├── __init__.py         # registro dei modelli e build_model(cfg)                 [fatto]
+│       ├── baselines.py        # persistenza e ResidualMLPBaseline                       [fatto]
 │       └── common.py           # testa dei quantili, input mask-aware, codifica tempo    [fatto]
 └── tests/
     ├── test_contract.py        # test sul contratto del batch                            [fatto]
-    └── test_losses_and_common.py  # test su loss e componenti comuni dei modelli         [fatto]
+    ├── test_losses_and_common.py  # test su loss e componenti comuni dei modelli         [fatto]
+    └── test_models.py          # test su baseline e build_model                          [fatto]
 ```
 
 L'EDA si lancia con `python -m src.eda` e salva grafici e `eda_summary.json` in `runs/eda/`.
@@ -330,6 +333,13 @@ Questi blocchi sono condivisi da tutte le architetture e sono già implementati 
 - **Testa dei quantili** (`MonotonicQuantileHead` in [`src/models/common.py`](src/models/common.py)): per ogni step e indice prevede la mediana e due scarti positivi (`softplus`), quindi $\hat{q}_{0.1} \le \hat{q}_{0.5} \le \hat{q}_{0.9}$ vale sempre, senza *quantile crossing*. Con `residual=True` (default) prevede la variazione rispetto all'ultima osservazione clear-sky (`last_obs`); all'inizio del training il modello coincide con la baseline di persistenza.
 - **Input mask-aware** (`build_step_features`): per ogni giorno affianca ai valori i flag di presenza `(~mask)` e il tempo relativo `delta_t / 30`, così il modello distingue un dato mancante (riempito con `0.0`) da un valore nella media. Il numero di feature è letto dai dati, quindi funziona anche con `drop_features`.
 - **Codifica del tempo** (`ContinuousTimeEncoding`): codifica sinusoidale di `delta_t` (periodi da 4 a 1000 giorni), senza parametri appresi, valida per sequenze di qualsiasi lunghezza (anche oltre i 126 giorni di `ood_s`).
+
+### Baseline
+
+Le baseline sono in [`src/models/baselines.py`](src/models/baselines.py) e si scelgono con `model.name` in `config.yaml` (test in `tests/test_models.py`).
+
+- **Persistenza** (`persistence`): prevede per tutti e 3 gli step l'ultima osservazione clear-sky (`last_obs`), con i tre quantili coincidenti. Non ha parametri ed è il riferimento minimo da battere.
+- **MLP residuo** (`residual_mlp`): per ciascuno dei 3 step costruisce un vettore di dimensione fissa con la media della history e il giorno $t_0$, la media del futuro **solo fino al giorno del target** (riassunto causale: lo step 1 non vede il meteo successivo) e il giorno del target, più la codifica dell'orizzonte `target_delta_t`. Il vettore passa in un MLP (`Linear → LayerNorm → GELU → Dropout`, 2 strati da 128 neuroni) e nella testa dei quantili con previsione residua. Le medie perdono l'ordine dei giorni: è il limite che i modelli sequenziali dovranno superare.
 
 ---
 
