@@ -170,7 +170,7 @@ Tutti gli iperparametri e i percorsi del progetto sono centralizzati nel file [`
 - **`preprocessing`**: normalizzazione di feature e target, riempimento dei NaN, convenzione delle maschere, padding dinamico, `use_future_meteo`, `drop_features` (per ablation), `add_delta_t`. Il significato di ogni parametro è in [`docs/batch_contract.md`](docs/batch_contract.md), sezione 5.
 - **`task`**: vincoli fissati dalla traccia (`targets`, `n_past`, `n_future`, `quantiles`) — **da non modificare**.
 - **`model`**: nome del modello (`name`) e dizionario dei suoi parametri (`params`), da compilare in base all'architettura scelta.
-- **`training`**: epoche, `batch_size`, `learning_rate`, `weight_decay`, `optimizer`, `scheduler`, `gradient_clip`, `early_stopping_patience` e `device`.
+- **`training`**: epoche, `batch_size`, `learning_rate`, `weight_decay`, `optimizer`, `scheduler`, `gradient_clip`, `early_stopping_patience`, `loss` (funzione di perdita, default `pinball`) e `device`.
 - **`output`**: cartella di salvataggio (`dir`) e nome dell'esperimento (`experiment_name`).
 
 ### Lettura dal codice
@@ -226,11 +226,14 @@ python -m unittest discover tests
 │   ├── eda.py                  # analisi esplorativa dei 4 split                         [fatto]
 │   ├── preprocessing.py        # Dataset, normalizzazione, masking, DataLoader           [da fare]
 │   ├── metrics.py              # RMSE, MAE, WMAPE, MASE, CRPS, pinball, coverage         [da fare]
+│   ├── losses.py               # Pinball Loss e build_loss()                             [fatto]
 │   ├── train.py                # ciclo di addestramento                                  [da fare]
 │   ├── eval.py                 # valutazione su id / ood-s / ood-t                       [da fare]
-│   └── models/                 # architetture (baseline, RNN, Transformer, ...)          [da fare]
+│   └── models/                 # architetture (baseline, RNN, Transformer, ...)          [in corso]
+│       └── common.py           # testa dei quantili, input mask-aware, codifica tempo    [fatto]
 └── tests/
-    └── test_contract.py        # test sul contratto del batch                            [fatto]
+    ├── test_contract.py        # test sul contratto del batch                            [fatto]
+    └── test_losses_and_common.py  # test su loss e componenti comuni dei modelli         [fatto]
 ```
 
 L'EDA si lancia con `python -m src.eda` e salva grafici e `eda_summary.json` in `runs/eda/`.
@@ -318,6 +321,15 @@ Un modello utile deve scendere chiaramente sotto questi valori, soprattutto su `
 - **Valutazione**: calcolo di RMSE, MAE, WMAPE, MASE, CRPS, pinball loss e copertura all'80% su `id`, `ood_s` e `ood_t`, sulla scala originale.
 - **Validazione**: sottoinsieme del train separato **per area** (`val_split_by: area`), bilanciato per numero di campioni e classi di Köppen (`val_balance_climate: true`).
 - **Riferimenti**: baseline di persistenza e modello dei docenti.
+
+### Loss e componenti comuni dei modelli
+
+Questi blocchi sono condivisi da tutte le architetture e sono già implementati e testati (`tests/test_losses_and_common.py`).
+
+- **Loss** ([`src/losses.py`](src/losses.py)): **Pinball Loss** media sui quantili 0.1, 0.5, 0.9, che esclude i target con `target_mask == True`. Si sceglie con `training.loss` in `config.yaml` tramite `build_loss(cfg)`.
+- **Testa dei quantili** (`MonotonicQuantileHead` in [`src/models/common.py`](src/models/common.py)): per ogni step e indice prevede la mediana e due scarti positivi (`softplus`), quindi $\hat{q}_{0.1} \le \hat{q}_{0.5} \le \hat{q}_{0.9}$ vale sempre, senza *quantile crossing*. Con `residual=True` (default) prevede la variazione rispetto all'ultima osservazione clear-sky (`last_obs`); all'inizio del training il modello coincide con la baseline di persistenza.
+- **Input mask-aware** (`build_step_features`): per ogni giorno affianca ai valori i flag di presenza `(~mask)` e il tempo relativo `delta_t / 30`, così il modello distingue un dato mancante (riempito con `0.0`) da un valore nella media. Il numero di feature è letto dai dati, quindi funziona anche con `drop_features`.
+- **Codifica del tempo** (`ContinuousTimeEncoding`): codifica sinusoidale di `delta_t` (periodi da 4 a 1000 giorni), senza parametri appresi, valida per sequenze di qualsiasi lunghezza (anche oltre i 126 giorni di `ood_s`).
 
 ---
 

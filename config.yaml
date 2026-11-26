@@ -71,6 +71,7 @@ training:
   scheduler: cosine           # none | cosine | plateau
   gradient_clip: 1.0          # null per disattivare
   early_stopping_patience: 10
+  loss: pinball               # pinball (Pinball Loss sui quantili di task.quantiles)
   device: auto                # auto | cpu | cuda
 
 # -----------------------------------------------------------------------------
